@@ -78,6 +78,7 @@ int main(int argc, char *argv[]) {
 
     // step 2. model initialization
     Network model;
+    //model.add_layer(new Pad("pad1", {0, 0, 0, 0, 3, 3, 3, 3}, 0)); //[1,1,28,28] -> [1,1,32,32]
     model.add_layer(new Conv2D("conv1", 32, 5, 1, 2)); //[1,1,32,32] -> [1,32,28,28]
     model.add_layer(new FusedBatchNormalization("fbn1", CUDNN_BATCHNORM_SPATIAL)); //[1,1,28,28] -> [1,32,28,28]
     model.add_layer(new Activation("relu1", CUDNN_ACTIVATION_RELU)); //[1,1,28,28] -> [1,32,28,28]
