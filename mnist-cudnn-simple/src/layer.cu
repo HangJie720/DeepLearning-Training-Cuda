@@ -879,3 +879,125 @@ Blob<float> *FusedBatchNormalization::backward(Blob<float> *grad_input) {
 
     return grad_input_;
 }
+
+
+/****************************************************************
+ * Pad definition                                               *
+ ****************************************************************/
+Pad::Pad(std::string name, std::array<int, 8> paddings, int pad_value) {
+    name_ = name;
+    paddings_ = paddings;
+    pad_value_ = pad_value;
+}
+
+Pad::~Pad() {}
+
+Blob<float> *Pad::forward(Blob<float> *input) {
+    // initilaize input and output
+    if (input_ == nullptr || batch_size_ != input->n()) {
+        input_ = input;
+        batch_size_ = input->n();
+
+        if (output_ == nullptr)
+            output_ = new Blob<float>(input->n() + paddings_.at(0) + paddings_.at(1),
+                                      input->c() + paddings_.at(2) + paddings_.at(3),
+                                      input->h() + paddings_.at(4) + paddings_.at(5),
+                                      input->w() + paddings_.at(6) + paddings_.at(7));
+        else
+            output_->reset(input->n() + paddings_.at(0) + paddings_.at(1),
+                           input->c() + paddings_.at(2) + paddings_.at(3),
+                           input->h() + paddings_.at(4) + paddings_.at(5),
+                           input->w() + paddings_.at(6) + paddings_.at(7));
+    }
+
+    char buffer1[10];
+    char buffer2[10];
+    sprintf(buffer1, "%d", (batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D);
+    sprintf(buffer2, "%d", BLOCK_DIM_1D);
+    setenv("TF_EIGEN_GRIDSIZE", buffer1, 1);
+    setenv("TF_EIGEN_BLOCKSIZE", buffer2, 1);
+
+    Eigen::GpuStreamDevice stream;
+    Eigen::GpuDevice gpu_device(&stream);
+
+    Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_in(input_->cuda(), input_->n(), input_->c(), input_->h(),
+                                                      input_->w());
+    Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_out(output_->cuda(), output_->n(), output_->c(), output_->h(),
+                                                       output_->w());
+
+    Eigen::array<std::pair<int, int>, 4> pads;
+
+    pads[0] = std::make_pair(paddings_.at(0), paddings_.at(1));
+    pads[1] = std::make_pair(paddings_.at(2), paddings_.at(3));
+    pads[2] = std::make_pair(paddings_.at(4), paddings_.at(5));
+    pads[3] = std::make_pair(paddings_.at(6), paddings_.at(7));
+
+    gpu_out.device(gpu_device) = gpu_in.pad(pads, pad_value_);
+    cudaDeviceSynchronize();
+
+#if (DEBUG_PADDING & 0x01)
+    std::cout << name_ << "[FORWARD]" << std::endl;
+    input_->print(  name_ + "::input", true, input_->n(), input_->h());
+    output_->print( name_ + "::output", true, output_->n(), output_->h());
+#endif
+
+    return output_;
+}
+
+Blob<float> *Pad::backward(Blob<float> *grad_input) {
+    // initialize grad_output back-propagation space
+    if (grad_input_ == nullptr || batch_size_ != grad_input->n()) {
+        grad_output_ = grad_input;
+        batch_size_ = grad_input->n();
+
+        if (grad_input_ == nullptr)
+            grad_input_ = new Blob<float>(grad_input->n() - paddings_.at(0) - paddings_.at(1),
+                                          grad_input->c() - paddings_.at(2) - paddings_.at(3),
+                                          grad_input->h() - paddings_.at(4) - paddings_.at(5),
+                                          grad_input->w() - paddings_.at(6) - paddings_.at(7));
+        else
+            grad_input_->reset(grad_input->n() - paddings_.at(0) - paddings_.at(1),
+                               grad_input->c() - paddings_.at(2) - paddings_.at(3),
+                               grad_input->h() - paddings_.at(4) - paddings_.at(5),
+                               grad_input->w() - paddings_.at(6) - paddings_.at(7));
+    }
+
+
+    if (!gradient_stop_){
+        char buffer1[10];
+        char buffer2[10];
+        sprintf(buffer1, "%d", (batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D);
+        sprintf(buffer2, "%d", BLOCK_DIM_1D);
+        setenv("TF_EIGEN_GRIDSIZE", buffer1, 1);
+        setenv("TF_EIGEN_BLOCKSIZE", buffer2, 1);
+
+        Eigen::GpuStreamDevice stream;
+        Eigen::GpuDevice gpu_device(&stream);
+
+        Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_in(grad_output_->cuda(), grad_output_->n(), grad_output_->c(),
+                                                          grad_output_->h(),
+                                                          grad_output_->w());
+        Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_out(grad_input_->cuda(), grad_input_->n(), grad_input_->c(),
+                                                           grad_input_->h(),
+                                                           grad_input_->w());
+
+
+        Eigen::array<int, 4> offsets = {0, 0, paddings_.at(4), paddings_.at(6)};
+        Eigen::array<int, 4> extents = {batch_size_, grad_output_->c(),
+                                        grad_output_->w() - paddings_.at(6) - paddings_.at(7),
+                                        grad_output_->h() - paddings_.at(4) - paddings_.at(5)};
+        gpu_out.device(gpu_device) = gpu_in.slice(offsets, extents);
+        cudaDeviceSynchronize();
+    }
+
+
+#if (DEBUG_PADDING & 0x02)
+    std::cout << name_ << "[BACKWARD]" << std::endl;
+    grad_output_->print(  name_ + "::gradients", true, grad_output_->n(), grad_output_->h());
+    grad_input_->print(  name_ + "::gdata", true, grad_input_->n(), grad_input_->h());
+    if (!gradient_stop_)
+        grad_input_->print(  name_ + "::gdata", true);
+#endif // DEBUG_PADDING
+
+    return grad_input_;
+}

@@ -1,5 +1,6 @@
 #ifndef _LAYER_H_
 #define _LAYER_H_
+#define EIGEN_USE_GPU
 
 #include <string>
 
@@ -9,6 +10,9 @@
 #include "blob.h"
 #include "loss.h"
 #include "helper.h"
+
+#include <unsupported/Eigen/CXX11/Tensor>
+#include <unsupported/Eigen/CXX11/src/Tensor/TensorGpuHipCudaDefines.h>
 
 namespace cudl {
 
@@ -222,6 +226,22 @@ namespace cudl {
         cudnnBatchNormMode_t mode_;
         cudnnTensorDescriptor_t bnScaleBiasMeanVarDesc_;
     };
+
+    class Pad : public Layer {
+    public:
+        Pad(std::string name, std::array<int, 8> paddings, int pad_value);
+
+        ~Pad();
+
+        Blob<float> *forward(Blob<float> *input);
+
+        Blob<float> *backward(Blob<float> *grad_input);
+
+    private:
+        std::array<int, 8> paddings_;
+        int pad_value_ = 0;
+    };
+
 
 
 } // namespace cudl
