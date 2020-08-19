@@ -14,6 +14,8 @@
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <unsupported/Eigen/CXX11/src/Tensor/TensorGpuHipCudaDefines.h>
 
+using Eigen::Tensor;
+
 namespace cudl {
 
     class Layer {
