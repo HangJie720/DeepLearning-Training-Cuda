@@ -143,6 +143,26 @@ void Network::update_adam(float learning_rate, float beta1, float beta2, float e
     nvtxRangePop();
 }
 
+void Network::update_momentum(float learning_rate, float momentum) {
+        if (phase_ == inference)
+            return;
+
+#if (DEBUG_UPDATE)
+        std::cout << "Start update.. lr = " << learning_rate << std::endl;
+#endif
+
+        nvtxRangePushA("Update");
+        for (auto layer : layers_) {
+            // if no parameters, then pass
+            if (layer->weights_ == nullptr || layer->grad_weights_ == nullptr ||
+                layer->biases_ == nullptr || layer->grad_biases_ == nullptr)
+                continue;
+
+            layer->update_weights_biases_with_momentum(learning_rate, momentum);
+        }
+        nvtxRangePop();
+}
+
 int Network::write_file()
 {
     std::cout << ".. store weights to the storage .." << std::endl;

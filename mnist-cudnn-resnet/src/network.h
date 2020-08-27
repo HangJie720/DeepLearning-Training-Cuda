@@ -34,6 +34,8 @@ namespace cudl {
         void update_adam(float learning_rate = 0.01f, float beta1 = 0.9f, float beta2 = 0.999f,
                          float eps_hat = 0.00000001f, int step = 0);
 
+        void update_momentum(float learning_rate = 0.01f, float momentum = 0.9f);
+
         int load_pretrain();
 
         int write_file();

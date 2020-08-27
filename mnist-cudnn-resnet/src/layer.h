@@ -96,6 +96,8 @@ namespace cudl {
 
         void update_weights_biases_with_adam(float learning_rate, float beta1, float beta2, float eps_hat, int step);
 
+        void update_weights_biases_with_momentum(float learning_rate, float momentum);
+
         // cuda handle container
         CudaContext *cuda_ = nullptr;
 

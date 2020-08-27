@@ -4,9 +4,44 @@
 
 #include <iomanip>
 #include <nvToolsExt.h>
+#include <map>
 
 #define SWITCH_CHAR             '-'
 using namespace cudl;
+
+Layer *residual_block(Network &model, Layer *mainline, int out_channels, int repetitions, int blockId, int &conv_name,
+                     int &fbn_name, int &relu_name, int &add_name) {
+    Layer *shortcut = nullptr;
+    int init_stride;
+    int init_padding;
+    for (int i = 0; i < repetitions; i++) {
+        init_stride = 1;
+        init_padding = 1;
+        shortcut = mainline;
+        if (i == 0) {
+            if (blockId) init_stride = 2;
+            shortcut = model.add_layer(new Conv2D(shortcut, "conv2d_" + std::to_string(++conv_name), out_channels * 4, 1, init_stride));
+            shortcut = model.add_layer(new FusedBatchNormalization(shortcut, "fbn_" +  std::to_string(++fbn_name), CUDNN_BATCHNORM_SPATIAL));
+        }
+        mainline = model.add_layer(new Conv2D(mainline, "conv2d_" + std::to_string(++conv_name), out_channels, 1, 1));
+        mainline = model.add_layer(new FusedBatchNormalization(mainline, "fbn_" + std::to_string(++fbn_name), CUDNN_BATCHNORM_SPATIAL));
+        mainline = model.add_layer(new Activation(mainline, "relu_" + std::to_string(++relu_name), CUDNN_ACTIVATION_RELU));
+        if (i == 0 && blockId) {
+            init_padding = 0;
+            mainline = model.add_layer(new Pad(mainline, "pad_", {0, 0, 0, 0, 1, 1, 1, 1}, 0));
+        }
+        mainline = model.add_layer(new Conv2D(mainline, "conv2d_" + std::to_string(++conv_name), out_channels, 3, init_stride, init_padding));
+        mainline = model.add_layer(new FusedBatchNormalization(mainline, "fbn_" + std::to_string(++fbn_name),CUDNN_BATCHNORM_SPATIAL));
+        mainline = model.add_layer(new Activation(mainline, "relu_" + std::to_string(++relu_name),CUDNN_ACTIVATION_RELU));
+        mainline = model.add_layer(new Conv2D(mainline, "conv2d_" + std::to_string(++conv_name), out_channels * 4, 1, 1));
+        mainline = model.add_layer(new FusedBatchNormalization(mainline, "fbn_" + std::to_string(++fbn_name), CUDNN_BATCHNORM_SPATIAL));
+
+        mainline = model.add_layer(new Add(mainline, shortcut, "add_" + std::to_string(++add_name)));
+        mainline = model.add_layer(new Activation(mainline, "relu_" + std::to_string(++relu_name), CUDNN_ACTIVATION_RELU));
+    }
+
+    return mainline;
+}
 
 int main(int argc, char *argv[]) {
     /* configure the network */
@@ -25,6 +60,14 @@ int main(int argc, char *argv[]) {
 
     int batch_size_test = 1000;
     int num_steps_test = 10;
+
+    int resnet_size = 18;
+    int out_channels = 64;
+    int conv_name = 0;
+    int fbn_name = 0;
+    int add_name = 0;
+    int relu_name = 0;
+    std::map<int,std::array<int,4>> block_size;
 
     int error = 0;
     argc -= 1;
@@ -52,6 +95,9 @@ int main(int argc, char *argv[]) {
                     break;
                 case 'y':
                     num_steps_test = atol(argv[0] + 2);
+                    break;
+                case 'r':
+                    resnet_size = atol(argv[0] + 2);
                     break;
                 default:
                     error++;
@@ -83,143 +129,30 @@ int main(int argc, char *argv[]) {
     Network model;
     Layer *mainline = nullptr, *shortcut = nullptr;
 
-    //mainline = model.add_layer(new Pad(mainline, "resnet_model_Pad", {0, 0, 0, 0, 3, 3, 3, 3}, 0)); //[1,1,28,28] -> [1,1,34,34]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_Conv2D", 64, 7, 2, 3)); //[1,1,34,34] -> [1,64,14,14]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu", CUDNN_ACTIVATION_RELU)); //[1,64,14,14] -> [1,64,14,14]
-    mainline = model.add_layer(new Pooling(mainline, "resnet_model_max_pooling2d_MaxPool", 3, 1, 2, CUDNN_POOLING_MAX)); //[1,64,14,14] -> [1,64,7,7]
+    mainline = model.add_layer(new Pad(mainline, "pad", {0, 0, 0, 0, 3, 3, 3, 3}, 0)); //[1,1,28,28] -> [1,1,34,34]
+    mainline = model.add_layer(new Conv2D(mainline, "conv2d", 64, 7, 2)); //[1,1,34,34] -> [1,64,14,14]
+    mainline = model.add_layer(new FusedBatchNormalization(mainline, "fbn",CUDNN_BATCHNORM_SPATIAL));
+    mainline = model.add_layer(new Activation(mainline, "relu", CUDNN_ACTIVATION_RELU)); //[1,64,14,14] -> [1,64,14,14]
+    mainline = model.add_layer(new Pooling(mainline, "pool", 3, 1, 2, CUDNN_POOLING_MAX)); //[1,64,14,14] -> [1,64,7,7]
 
-    // block1 start
-    shortcut = mainline;
-    shortcut = model.add_layer(new Conv2D(shortcut, "resnet_model_conv2d_1_Conv2D", 256, 1, 1, 0)); //[1,64,7,7] -> [1,256,7,7]
-    shortcut = model.add_layer(new FusedBatchNormalization(shortcut, "resnet_model_batch_normalization_1_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
+    switch (resnet_size){
+            case 18:
+                block_size[18]={2, 2, 2, 2};
+                break;
+            case 50:
+                block_size[50]={3, 6, 4, 3};
+                break;
+            case 101:
+                block_size[101]={3, 6, 23, 3};
+                break;
+    }
 
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_2_Conv2D", 64, 1, 1, 0)); //[1,64,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_2_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_1", CUDNN_ACTIVATION_RELU)); //[1,64,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_3_Conv2D", 64, 3, 1, 1)); //[1,64,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_3_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_2", CUDNN_ACTIVATION_RELU)); //[1,64,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_4_Conv2D", 256, 1, 1, 0)); //[1,64,7,7] -> [1,256,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_4_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
+    for (int blockId = 0; blockId < 4; blockId++) {
+        mainline = residual_block(model, mainline, out_channels, block_size[resnet_size].at(blockId), blockId, conv_name, fbn_name, relu_name, add_name);
+        out_channels *= 2;
+    }
 
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add")); //[1,256,7,7] -> [1,256,7,7]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_3", CUDNN_ACTIVATION_RELU));//[1,256,7,7] -> [1,256,7,7]
-
-    shortcut = mainline;
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_5_Conv2D", 64, 1, 1, 0));//[1,256,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_5_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_4", CUDNN_ACTIVATION_RELU));//[1,64,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_6_Conv2D", 64, 3, 1, 1));//[1,256,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_6_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_5", CUDNN_ACTIVATION_RELU));//[1,64,7,7] -> [1,64,7,7]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_7_Conv2D", 256, 1, 1, 0));//[1,64,7,7] -> [1,256,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_7_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_1")); //[1,256,7,7] -> [1,256,7,7]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_6", CUDNN_ACTIVATION_RELU));//[1,256,7,7] -> [1,256,7,7]
-    // block1 end
-
-    // block2 start
-    shortcut = mainline;
-    //shortcut = model.add_layer(new Pad(shortcut, "resnet_model_Pad_1", {0, 0, 0, 0, 0, 0, 0, 0}, 0));//[1,256,7,7] -> [1,256,7,7]
-    shortcut = model.add_layer(new Conv2D(shortcut, "resnet_model_conv2d_8_Conv2D", 512, 1, 2));//[1,256,7,7] -> [1,512,4,4]
-    shortcut = model.add_layer(new FusedBatchNormalization(shortcut, "resnet_model_batch_normalization_8_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_9_Conv2D", 128, 1, 1, 0));//[1,256,7,7] -> [1,128,7,7]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_9_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_7", CUDNN_ACTIVATION_RELU));//[1,128,7,7] -> [1,128,7,7]
-    //mainline = model.add_layer(new Pad(mainline, "resnet_model_Pad_2", {0, 0, 0, 0, 1, 1, 1, 1}, 0));//[1,128,7,7] -> [1,128,9,9]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_10_Conv2D", 128, 3, 2, 1));//[1,128,9,9] -> [1,128,4,4]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_10_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_8", CUDNN_ACTIVATION_RELU));//[1,128,4,4] -> [1,128,4,4]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_11_Conv2D", 512, 1, 1, 0));//[1,128,4,4] -> [1,512,4,4]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_11_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_2")); //[1,512,4,4] -> [1,512,4,4]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_9", CUDNN_ACTIVATION_RELU));//[1,512,4,4] -> [1,512,4,4]
-
-    shortcut = mainline;
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_12_Conv2D", 128, 1, 1, 0));//[1,512,4,4] -> [1,128,4,4]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_12_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_10", CUDNN_ACTIVATION_RELU));//[1,128,4,4] -> [1,128,4,4]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_13_Conv2D", 128, 3, 1, 1));//[1,128,4,4] -> [1,128,4,4]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_13_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_11", CUDNN_ACTIVATION_RELU));//[1,128,4,4] -> [1,128,4,4]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_14_Conv2D", 512, 1, 1, 0));//[1,128,4,4] -> [1,512,4,4]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_14_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_3")); //[1,512,4,4] -> [1,512,4,4]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_12", CUDNN_ACTIVATION_RELU));//[1,512,4,4] -> [1,512,4,4]
-    // block2 end
-
-    // block3 start
-    shortcut = mainline;
-    //shortcut = model.add_layer(new Pad(shortcut, "resnet_model_Pad_3", {0, 0, 0, 0, 0, 0, 0, 0}, 0));//[1,512,4,4] -> [1,512,4,4]
-    shortcut = model.add_layer(new Conv2D(shortcut, "resnet_model_conv2d_15_Conv2D", 1024, 1, 2));//[1,512,4,4] -> [1,1024,2,2]
-    shortcut = model.add_layer(new FusedBatchNormalization(shortcut, "resnet_model_batch_normalization_15_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_16_Conv2D", 256, 1, 1, 0));//[1,512,4,4] -> [1,256,4,4]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_16_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_13", CUDNN_ACTIVATION_RELU));//[1,256,4,4] -> [1,256,4,4]
-    //mainline = model.add_layer(new Pad(mainline, "resnet_model_Pad_4", {0, 0, 0, 0, 1, 1, 1, 1}, 0));//[1,256,4,4] -> [1,256,6,6]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_17_Conv2D", 256, 3, 2, 1));//[1,256,6,6] -> [1,256,2,2]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_17_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_14", CUDNN_ACTIVATION_RELU));//[1,256,2,2] -> [1,256,2,2]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_18_Conv2D", 1024, 1, 1, 0));//[1,256,2,2] -> [1,1024,2,2]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_18_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_4")); //[1,1024,2,2] -> [1,1024,2,2]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_15", CUDNN_ACTIVATION_RELU));//[1,1024,2,2] -> [1,1024,2,2]
-
-    shortcut = mainline;
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_19_Conv2D", 256, 1, 1, 0));//[1,1024,2,2] -> [1,256,2,2]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_19_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_16", CUDNN_ACTIVATION_RELU));//[1,256,2,2] -> [1,256,2,2]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_20_Conv2D", 256, 3, 1, 1));//[1,256,2,2] -> [1,256,2,2]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_20_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_17", CUDNN_ACTIVATION_RELU));//[1,256,2,2] -> [1,256,2,2]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_21_Conv2D", 1024, 1, 1, 0));//[1,256,2,2] -> [1,1024,2,2]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_21_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_5")); //[1,1024,2,2] -> [1,1024,2,2]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_18", CUDNN_ACTIVATION_RELU));//[1,1024,2,2] -> [1,1024,2,2]
-    // block3 end
-
-    // block4 start
-    shortcut = mainline;
-    //shortcut = model.add_layer(new Pad(shortcut, "resnet_model_Pad_5", {0, 0, 0, 0, 0, 0, 0, 0}, 0));//[1,1024,2,2] -> [1,1024,2,2]
-    shortcut = model.add_layer(new Conv2D(shortcut, "resnet_model_conv2d_22_Conv2D", 2048, 1, 2));//[1,1024,2,2] -> [1,2048,1,1]
-    shortcut = model.add_layer(new FusedBatchNormalization(shortcut, "resnet_model_batch_normalization_22_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_23_Conv2D", 512, 1, 1, 0));//[1,1024,2,2] -> [1,512,2,2]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_23_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_19", CUDNN_ACTIVATION_RELU));//[1,512,2,2] -> [1,512,2,2]
-    //mainline = model.add_layer(new Pad(mainline, "resnet_model_Pad_6", {0, 0, 0, 0, 1, 1, 1, 1}, 0));//[1,512,2,2] -> [1,512,4,4]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_24_Conv2D", 512, 3, 2, 1));//[1,512,4,4] -> [1,512,1,1]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_24_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_20", CUDNN_ACTIVATION_RELU));//[1,512,1,1] -> [1,512,1,1]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_25_Conv2D", 2048, 1, 1, 0));//[1,512,1,1] -> [1,2048,1,1]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_25_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_6")); //[1,2048,1,1] -> [1,2048,1,1]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_21", CUDNN_ACTIVATION_RELU));//[1,2048,1,1] -> [1,2048,1,1]
-
-    shortcut = mainline;
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_26_Conv2D", 512, 1, 1, 0));//[1,2048,1,1] -> [1,512,1,1]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_26_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_22", CUDNN_ACTIVATION_RELU));//[1,512,1,1] -> [1,512,1,1]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_27_Conv2D", 512, 3, 1, 1));//[1,512,1,1] -> [1,512,1,1]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_27_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_23", CUDNN_ACTIVATION_RELU));//[1,512,1,1] -> [1,512,1,1]
-    mainline = model.add_layer(new Conv2D(mainline, "resnet_model_conv2d_28_Conv2D", 2048, 1, 1, 0));//[1,512,1,1] -> [1,2048,1,1]
-    mainline = model.add_layer(new FusedBatchNormalization(mainline, "resnet_model_batch_normalization_28_FusedBatchNormV3",CUDNN_BATCHNORM_SPATIAL));
-
-    mainline = model.add_layer(new Add(mainline, shortcut, "resnet_model_add_7")); //[1,2048,1,1] -> [1,2048,1,1]
-    mainline = model.add_layer(new Activation(mainline, "resnet_model_Relu_24", CUDNN_ACTIVATION_RELU));//[1,2048,1,1] -> [1,2048,1,1]
-    // block4 end
-
-    mainline = model.add_layer(new Dense(mainline, "resnet_model_dense1", 10)); //[1,500,1,1] -> [1,10,1,1]
+    mainline = model.add_layer(new Dense(mainline, "dense", 10)); //[1,500,1,1] -> [1,10,1,1]
     mainline = model.add_layer(new Softmax(mainline, "softmax"));//[1,10,1,1] -> [1,10,1,1]
 
     model.cuda();
@@ -252,7 +185,8 @@ int main(int argc, char *argv[]) {
         // we will use learning rate decay to the learning rate
         //learning_rate *= 1.f / (1.f + lr_decay * step);
         //model.update(learning_rate);
-        model.update_adam(learning_rate, beta1, beta2, eps_hat, step);
+        //model.update_adam(learning_rate, beta1, beta2, eps_hat, step);
+        model.update_momentum(learning_rate, beta1);
         // fetch next data
         step = train_data_loader.next();
 

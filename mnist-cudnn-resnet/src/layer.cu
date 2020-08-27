@@ -89,6 +89,19 @@ __global__ void adam_update(
     }
 }
 
+__global__ void momentum_update(
+    int N,
+    float *m,
+    float *w,
+    const float *g,
+    const float lr,
+    const float momentum) {
+    CUDA_1D_KERNEL_LOOP(i, N) {
+    m[i] = momentum * m[i] + lr * g[i];
+        w[i] = w[i] - m[i];
+    }
+}
+
 __global__ void add(float *array_a, float *array_b, float *array_c, int size) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int step = blockDim.x * gridDim.x;
@@ -242,6 +255,42 @@ void Layer::update_weights_biases_with_adam(float learning_rate, float beta1, fl
 #if (DEBUG_UPDATE)
         biases_->print(name_ + "biases (after update)", true);
         // getchar();
+#endif // DEBUG_UPDATE
+    }
+}
+
+void Layer::update_weights_biases_with_momentum(float learning_rate, float momentum) {
+
+    if (weights_ != nullptr && grad_weights_ != nullptr) {
+
+#if (DEBUG_UPDATE)
+weights_->print(name_ + "::weights (before update)", true);
+grad_weights_->print(name_ + "::gweights", true);
+#endif // DEBUG_UPDATE
+        /*
+         * mt = momentum*mt + lr*dw
+         * w = w - mt
+         */
+        momentum_update <<< 16, BLOCK_DIM_1D >>> (weights_->len(), weights_m_->cuda(), weights_->cuda(), grad_weights_->cuda(), learning_rate, momentum);
+
+
+#if (DEBUG_UPDATE)
+weights_->print(name_ + "weights (after update)", true);
+// getchar();
+#endif // DEBUG_UPDATE
+    }
+
+    if (biases_ != nullptr && grad_biases_ != nullptr) {
+#if (DEBUG_UPDATE)
+biases_->print(name_ + "biases (before update)", true);
+grad_biases_->print(name_ + "gbiases", true);
+#endif // DEBUG_UPDATE
+
+        momentum_update <<< 16, BLOCK_DIM_1D >>> (biases_->len(), biases_m_->cuda(), biases_->cuda(), grad_biases_->cuda(), learning_rate, momentum);
+
+#if (DEBUG_UPDATE)
+biases_->print(name_ + "biases (after update)", true);
+// getchar();
 #endif // DEBUG_UPDATE
     }
 }
