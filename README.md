@@ -18,10 +18,10 @@ $ ./train -b32 -n500 -m100 -r50
 loading ./dataset/train-images-idx3-ubyte
 loaded 60000 items..
 .. model Configuration ..
-CUDA: resnet_model_conv2d_Conv2D
-CUDA: resnet_model_batch_normalization_FusedBatchNormV3
-CUDA: resnet_model_Relu
-CUDA: resnet_model_max_pooling2d_MaxPool
+CUDA: conv2d
+CUDA: fbn
+CUDA: relu
+CUDA: pool
 CUDA: conv2d_1
 CUDA: fbn_1
 CUDA: conv2d_2
@@ -193,10 +193,10 @@ CUDA: conv2d_52
 CUDA: fbn_52
 CUDA: add_16
 CUDA: relu_48
-CUDA: resnet_model_dense1
+CUDA: dense
 CUDA: softmax
-.. initialized resnet_model_conv2d_Conv2D layer ..
-.. initialized resnet_model_batch_normalization_FusedBatchNormV3 layer ..
+.. initialized conv2d layer ..
+.. initialized fbn layer ..
 .. initialized conv2d_1 layer ..
 .. initialized fbn_1 layer ..
 .. initialized conv2d_2 layer ..
@@ -301,7 +301,7 @@ CUDA: softmax
 .. initialized fbn_51 layer ..
 .. initialized conv2d_52 layer ..
 .. initialized fbn_52 layer ..
-.. initialized resnet_model_dense1 layer ..
+.. initialized dense layer ..
 step:  100, loss: 0.082, accuracy: 45.188%
 step:  200, loss: 0.028, accuracy: 86.094%
 step:  300, loss: 0.016, accuracy: 92.250%
@@ -332,5 +332,3 @@ Done.
 - [NVIDIA CUDNN DOCUMENTATION](https://docs.nvidia.com/deeplearning/cudnn/index.html)
 - [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page)
 - [mnist-cudnn](https://github.com/haanjack/mnist-cudnn)
-- [MNIST-AlexNet-Using-Tensorflow](https://github.com/qzhao19/MNIST-AlexNet-Using-Tensorflow/blob/master/model.py)
-- [CV-Alexnet](https://github.com/ShaoQiBNU/CV-Alexnet)
