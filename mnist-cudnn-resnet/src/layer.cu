@@ -34,20 +34,14 @@ __global__ void PadForward(const int count, const float *in, float *out,
 
         out[((i * channel + c) * height_out + h + pad) * width_out + pad + w] =
                 in[index];
-    }
-}
-
-__global__ void PadForwardPadZero(const int count, float *out,
-                                  const int num, const int channel, const int height_out, const int width_out,
-                                  const int pad) {
-    CUDA_1D_KERNEL_LOOP(index, count) {
-        int w = index % width_out;
-        int h = (index / width_out) % height_out;
-        if (h < pad || h > height_out - 1 - pad || w < pad || w > width_out - 1 - pad) {
+        int w1 = index % width_out;
+        int h1 = (index / width_out) % height_out;
+        if (h1 < pad || h1 > height_out - 1 - pad || w1 < pad || w1 > width_out - 1 - pad) {
             out[index] = 0.f;
         }
     }
 }
+
 
 __global__ void PadBackward(const int count, const float *in, float *out,
                             const int num, const int channel, const int height_in, const int width_in,
@@ -232,8 +226,8 @@ void Layer::update_weights_biases_with_adam(float learning_rate, float beta1, fl
          * vtt = vt/(1-(b2^(i+1)))
          * w = w + eps * mtt/(std::sqrt(vtt) + e)
          */
-
-        adam_update << < 16, BLOCK_DIM_1D >> >
+        config = getGpuLaunchConfig(weights_->len(), adam_update, 0, 0);
+        adam_update <<< config.block_count, config.thread_per_block >>>
                              (weights_->len(), step, weights_m_->cuda(), weights_v_->cuda(), weights_->cuda(), grad_weights_->cuda(), beta1, beta2, eps_hat, learning_rate);
 
 
@@ -248,8 +242,8 @@ void Layer::update_weights_biases_with_adam(float learning_rate, float beta1, fl
         biases_->print(name_ + "biases (before update)", true);
         grad_biases_->print(name_ + "gbiases", true);
 #endif // DEBUG_UPDATE
-
-        adam_update << < 16, BLOCK_DIM_1D >> >
+        config = getGpuLaunchConfig(biases_->len(), adam_update, 0, 0);
+        adam_update <<<config.block_count,config.thread_per_block>>>
                              (biases_->len(), step, biases_m_->cuda(), biases_v_->cuda(), biases_->cuda(), grad_biases_->cuda(), beta1, beta2, eps_hat, learning_rate);
 
 #if (DEBUG_UPDATE)
@@ -271,7 +265,8 @@ grad_weights_->print(name_ + "::gweights", true);
          * mt = momentum*mt + lr*dw
          * w = w - mt
          */
-        momentum_update <<< 16, BLOCK_DIM_1D >>> (weights_->len(), weights_m_->cuda(), weights_->cuda(), grad_weights_->cuda(), learning_rate, momentum);
+        config = getGpuLaunchConfig(weights_->len(), momentum_update, 0, 0);
+        momentum_update <<< config.block_count, config.thread_per_block >>> (weights_->len(), weights_m_->cuda(), weights_->cuda(), grad_weights_->cuda(), learning_rate, momentum);
 
 
 #if (DEBUG_UPDATE)
@@ -285,8 +280,8 @@ weights_->print(name_ + "weights (after update)", true);
 biases_->print(name_ + "biases (before update)", true);
 grad_biases_->print(name_ + "gbiases", true);
 #endif // DEBUG_UPDATE
-
-        momentum_update <<< 16, BLOCK_DIM_1D >>> (biases_->len(), biases_m_->cuda(), biases_->cuda(), grad_biases_->cuda(), learning_rate, momentum);
+        config = getGpuLaunchConfig(biases_->len(), momentum_update, 0, 0);
+        momentum_update <<< config.block_count, config.thread_per_block >>> (biases_->len(), biases_m_->cuda(), biases_->cuda(), grad_biases_->cuda(), learning_rate, momentum);
 
 #if (DEBUG_UPDATE)
 biases_->print(name_ + "biases (after update)", true);
@@ -385,7 +380,8 @@ Blob<float> *Layer::sum_gradients(Blob<float> *grad) {
     if (copy_output_to_ != nullptr) {
         grad2 = copy_output_to_->get_grad();
         // grad = grad + grad2
-        add<<<(batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D, BLOCK_DIM_1D>>>(grad->cuda(), grad2->cuda(), grad->cuda(), grad->len());
+        config = getGpuLaunchConfig(grad2->len(), add, 0, 0);
+        add<<<config.block_count,config.thread_per_block>>>(grad->cuda(), grad2->cuda(), grad->cuda(), grad->len());
     }
     return grad;
 }
@@ -446,7 +442,8 @@ Blob<float> *Dense::forward(Blob<float> *input) {
         if (d_one_vec != nullptr)
             cudaFree(d_one_vec);
         checkCudaErrors(cudaMalloc((void **) &d_one_vec, sizeof(float) * batch_size_));
-        init_one_vec << < (batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D, BLOCK_DIM_1D >> > (d_one_vec, batch_size_);
+        config = getGpuLaunchConfig(batch_size_, init_one_vec, 0, 0);
+        init_one_vec <<<config.block_count, config.thread_per_block>>> (d_one_vec, batch_size_);
 
         // initialize weights and biases
         if (load_pretrain_ && !freeze_) {
@@ -1060,10 +1057,11 @@ Blob<float> *Add::forward(Blob<float> *input) {
             output_ = new Blob<float>(input->shape());
         else
             output_->reset(input->shape());
+        config = getGpuLaunchConfig(input_->len(), add, 0, 0);
     }
 
     // y = x + x2
-    add<<<(batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D, BLOCK_DIM_1D >>>(input_->cuda(), input2_->cuda(), output_->cuda(), input_->len());
+    add<<<config.block_count, config.thread_per_block>>>(input_->cuda(), input2_->cuda(), output_->cuda(), input_->len());
 
 #if (DEBUG_ADD & 0x01)
     std::cout << name_ << "[FORWARD]" << std::endl;
@@ -1149,12 +1147,8 @@ Blob<float> *Pad::forward(Blob<float> *input) {
     // gpu_out.device(gpu_device) = gpu_in.pad(pads, pad_value_);
 
     // cuda implemented.
-    PadForward << < (batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D, BLOCK_DIM_1D >> >
-                                                                     (input_->len(), input_->cuda(), output_->cuda(), input_->n(), input_->c(), input_->h(), input_->w(), paddings_.at(
-                                                                             4));
-    PadForwardPadZero << < (batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D, BLOCK_DIM_1D >> >
-                                                                            (output_->len(), output_->cuda(), output_->n(), output_->c(), output_->h(), output_->w(), paddings_.at(
-                                                                                    4));
+    config = getGpuLaunchConfig(input_->len(), PadForward, 0, 0);
+    PadForward <<<config.block_count, config.thread_per_block >>>(input_->len(), input_->cuda(), output_->cuda(), input_->n(), input_->c(), input_->h(), input_->w(), paddings_.at(4));
 
     //cudaDeviceSynchronize();
 
@@ -1183,6 +1177,7 @@ Blob<float> *Pad::backward(Blob<float> *grad_output) {
             grad_input_ = new Blob<float>(n, c, h, w);
         else
             grad_input_->reset(n, c, h, w);
+        config = getGpuLaunchConfig(grad_input_->len(), PadBackward, 0, 0);
     }
 
     if (!gradient_stop_) {
@@ -1200,9 +1195,7 @@ Blob<float> *Pad::backward(Blob<float> *grad_output) {
         // gpu_out.device(gpu_device) = gpu_in.slice(offsets, extents);
 
         // cuda implemented.
-        PadBackward << < (batch_size_ + BLOCK_DIM_1D - 1) / BLOCK_DIM_1D, BLOCK_DIM_1D >> >
-                                                                          (grad_input_->len(), grad_output_->cuda(), grad_input_->cuda(), grad_output_->n(), grad_output_->c(), grad_output_->h(), grad_output_->w(), paddings_.at(
-                                                                                  4));
+        PadBackward <<<config.block_count, config.thread_per_block>>>(grad_input_->len(), grad_output_->cuda(), grad_input_->cuda(), grad_output_->n(), grad_output_->c(), grad_output_->h(), grad_output_->w(), paddings_.at(4));
         //cudaDeviceSynchronize();
     }
 

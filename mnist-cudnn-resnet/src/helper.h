@@ -28,6 +28,8 @@ namespace cudl
 #define DEBUG_LOSS      0
 #define DEBUG_ACCURACY  0
 
+inline int DivUp(int a, int b) { return (a + b - 1) / b; }
+
 /* CUDA API error return checker */
 #ifndef checkCudaErrors
 #define checkCudaErrors(err)                                                                        \
@@ -183,6 +185,34 @@ class CudaContext
     private:
     cublasHandle_t _cublas_handle;
     cudnnHandle_t  _cudnn_handle;
+};
+
+struct GpuLaunchConfig {
+    // Number of threads per block.
+    int thread_per_block = -1;
+    // Number of blocks for GPU kernel launch.
+    int block_count = -1;
+};
+
+//Returns grid and block size that achieves maximum potential occupancy for a device function.
+template <typename T>
+GpuLaunchConfig getGpuLaunchConfig(int work_element_count, T kernel_function,
+                                   size_t dynamic_shared_memory_size,
+                                   int block_size_limit){
+
+    GpuLaunchConfig config;
+    int block_count = 0;
+    int thread_per_block = 0;
+
+    checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&block_count, &thread_per_block, kernel_function,
+                                                       dynamic_shared_memory_size, block_size_limit));
+
+    block_count = std::min(block_count, DivUp(work_element_count, thread_per_block));
+
+    config.thread_per_block = thread_per_block;
+    config.block_count = block_count;
+
+    return config;
 };
 
 } // namespace cudl

@@ -100,7 +100,8 @@ namespace cudl {
 
         // cuda handle container
         CudaContext *cuda_ = nullptr;
-
+        // cuda launch config
+        GpuLaunchConfig config;
         // pretrain parameters
         bool load_pretrain_ = false;
 
