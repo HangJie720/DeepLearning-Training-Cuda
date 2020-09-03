@@ -1133,22 +1133,22 @@ Blob<float> *Pad::forward(Blob<float> *input) {
             output_->reset(n, c, h, w);
     }
     // eigen implemented.
-    // Eigen::GpuStreamDevice stream;
-    // Eigen::GpuDevice gpu_device(&stream);
-    // Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_in(input_->cuda(), input_->n(), input_->c(),
-	// 	                                      input_->h(), input_->w());
-    // Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_out(output_->cuda(), output_->n(), output_->c(),
-	// 	                                      output_->h(), output_->w());
-    // Eigen::array<std::pair<int, int>, 4> pads;
-    // pads[0] = std::make_pair(paddings_.at(0), paddings_.at(1));
-    // pads[1] = std::make_pair(paddings_.at(2), paddings_.at(3));
-    // pads[2] = std::make_pair(paddings_.at(4), paddings_.at(5));
-    // pads[3] = std::make_pair(paddings_.at(6), paddings_.at(7));
-    // gpu_out.device(gpu_device) = gpu_in.pad(pads, pad_value_);
+     Eigen::GpuStreamDevice stream;
+     Eigen::GpuDevice gpu_device(&stream);
+     Eigen::TensorMap <Eigen::Tensor<float, 4, Eigen::RowMajor>> gpu_in(input_->cuda(), input_->n(), input_->c(),
+	 	                                      input_->h(), input_->w());
+     Eigen::TensorMap <Eigen::Tensor<float, 4, Eigen::RowMajor>> gpu_out(output_->cuda(), output_->n(), output_->c(),
+	 	                                      output_->h(), output_->w());
+     Eigen::array<std::pair<int, int>, 4> pads;
+     pads[0] = std::make_pair(paddings_.at(0), paddings_.at(1));
+     pads[1] = std::make_pair(paddings_.at(2), paddings_.at(3));
+     pads[2] = std::make_pair(paddings_.at(4), paddings_.at(5));
+     pads[3] = std::make_pair(paddings_.at(6), paddings_.at(7));
+     gpu_out.device(gpu_device) = gpu_in.pad(pads, pad_value_);
 
     // cuda implemented.
-    config = getGpuLaunchConfig(input_->len(), PadForward, 0, 0);
-    PadForward <<<config.block_count, config.thread_per_block >>>(input_->len(), input_->cuda(), output_->cuda(), input_->n(), input_->c(), input_->h(), input_->w(), paddings_.at(4));
+    //config = getGpuLaunchConfig(input_->len(), PadForward, 0, 0);
+    //PadForward <<<config.block_count, config.thread_per_block >>>(input_->len(), input_->cuda(), output_->cuda(), input_->n(), input_->c(), input_->h(), input_->w(), paddings_.at(4));
 
     //cudaDeviceSynchronize();
 
@@ -1182,20 +1182,20 @@ Blob<float> *Pad::backward(Blob<float> *grad_output) {
 
     if (!gradient_stop_) {
         // eigen implemented.
-        // Eigen::GpuStreamDevice stream;
-        // Eigen::GpuDevice gpu_device(&stream);
-        // Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_in(grad_output_->cuda(),
-	    //                                               grad_output_->n(), grad_output_->c(),
-        //                                                   grad_output_->h(), grad_output_->w());
-        // Eigen::TensorMap <Eigen::Tensor<float, 4>> gpu_out(grad_input_->cuda(),
-		// 	                                   grad_input_->n(), grad_input_->c(),
-        //                                                    grad_input_->h(), grad_input_->w());
-        // Eigen::array<int, 4> offsets = {paddings_.at(0), paddings_.at(2), paddings_.at(4), paddings_.at(6)};
-        // Eigen::array<int, 4> extents = {grad_input_->n(), grad_input_->c(), grad_input_->h(), grad_input_->w()};
-        // gpu_out.device(gpu_device) = gpu_in.slice(offsets, extents);
+         Eigen::GpuStreamDevice stream;
+         Eigen::GpuDevice gpu_device(&stream);
+         Eigen::TensorMap <Eigen::Tensor<float, 4, Eigen::RowMajor>> gpu_in(grad_output_->cuda(),
+	                                                   grad_output_->n(), grad_output_->c(),
+                                                           grad_output_->h(), grad_output_->w());
+         Eigen::TensorMap <Eigen::Tensor<float, 4, Eigen::RowMajor>> gpu_out(grad_input_->cuda(),
+		 	                                   grad_input_->n(), grad_input_->c(),
+                                                            grad_input_->h(), grad_input_->w());
+         Eigen::array<int, 4> offsets = {paddings_.at(0), paddings_.at(2), paddings_.at(4), paddings_.at(6)};
+         Eigen::array<int, 4> extents = {grad_input_->n(), grad_input_->c(), grad_input_->h(), grad_input_->w()};
+         gpu_out.device(gpu_device) = gpu_in.slice(offsets, extents);
 
         // cuda implemented.
-        PadBackward <<<config.block_count, config.thread_per_block>>>(grad_input_->len(), grad_output_->cuda(), grad_input_->cuda(), grad_output_->n(), grad_output_->c(), grad_output_->h(), grad_output_->w(), paddings_.at(4));
+        //PadBackward <<<config.block_count, config.thread_per_block>>>(grad_input_->len(), grad_output_->cuda(), grad_input_->cuda(), grad_output_->n(), grad_output_->c(), grad_output_->h(), grad_output_->w(), paddings_.at(4));
         //cudaDeviceSynchronize();
     }
 
